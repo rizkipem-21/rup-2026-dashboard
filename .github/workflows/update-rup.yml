@@ -7,17 +7,14 @@ on:
   # Cron: 05:00 WIB (22:00 UTC) setiap hari
   schedule:
     - cron: '0 22 * * *'
-  
   # Manual trigger dari Actions tab
   workflow_dispatch:
-    
   # Auto-run jika process-rup.js diubah
   push:
     paths:
       - 'process-rup.js'
       - '.github/workflows/update-rup.yml'
 
-# Environment variables global
 env:
   NODE_VERSION: '20'
 
@@ -28,18 +25,14 @@ jobs:
     timeout-minutes: 15
     
     steps:
-    # ========================================
     # 1. CHECKOUT REPO
-    # ========================================
     - name: 📥 Checkout repository
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         fetch-depth: 0
 
-    # ========================================
     # 2. SETUP ENVIRONMENT
-    # ========================================
     - name: 🛠️ Setup Node.js
       uses: actions/setup-node@v4
       with:
@@ -47,9 +40,7 @@ jobs:
         cache: 'npm'
         cache-dependency-path: '**/package-lock.json'
 
-    # ========================================
     # 3. VALIDASI TOKEN
-    # ========================================
     - name: 🔑 Validate INAPROC Token
       env:
         INAPROC_TOKEN: ${{ secrets.INAPROC_TOKEN }}
@@ -61,18 +52,14 @@ jobs:
         fi
         echo "✅ Token validated (length: ${#INAPROC_TOKEN})"
 
-    # ========================================
     # 4. CREATE DATA FOLDER
-    # ========================================
     - name: 📁 Setup data directory
       run: |
         mkdir -p data
         echo "📂 data/ folder ready"
         ls -la
 
-    # ========================================
     # 5. DOWNLOAD 5 FILE LEGACY INAPROC
-    # ========================================
     - name: 🌐 Download INAPROC Legacy Data
       env:
         INAPROC_TOKEN: ${{ secrets.INAPROC_TOKEN }}
@@ -80,162 +67,81 @@ jobs:
         echo "🚀 Downloading 5 Legacy files untuk KLPD D228 Tahun 2026..."
         echo "⏰ $(date)"
         
-        # File 1: Master Satker
-        echo "📋 1/5 Master Satker..."
         curl -s -L -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" \
           -o data/Legacy_rup_master-satker_2026.json
         
-        # File 2: Paket Penyedia Terumumkan
-        echo "📦 2/5 RUP Penyedia..."
         curl -s -L -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" \
           -o data/Legacy_rup_paket-penyedia-terumumkan_2026.json
         
-        # File 3: Paket Swakelola Terumumkan
-        echo "🏗️  3/5 RUP Swakelola..."
         curl -s -L -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" \
           -o data/Legacy_rup_paket-swakelola-terumumkan_2026.json
         
-        # File 4: Program Master
-        echo "📚 4/5 Program Master..."
         curl -s -L -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" \
           -o data/Legacy_rup_program-master_2026.json
         
-        # File 5: Struktur Anggaran PD (Pagu)
-        echo "💰 5/5 Pagu Anggaran..."
         curl -s -L -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" \
           -o data/Legacy_rup_struktur-anggaran-pd_2026.json
         
         echo "✅ All 5 files downloaded!"
-        echo ""
         ls -lh data/
-        echo ""
-        echo "File sizes:"
         du -h data/*.json | sort -hr
 
-    # ========================================
     # 6. RUN PROCESSOR
-    # ========================================
     - name: ⚙️ Process RUP Data
       run: |
         echo "🔄 Running process-rup.js..."
-        echo "=================================="
         node process-rup.js
-        echo "=================================="
-        echo ""
-        
-        # Validate output
+
+    # 7. VALIDATE OUTPUT
+    - name: ✅ Validate Results
+      run: |
         if [ ! -f "data/rekap.json" ]; then
-          echo "❌ rekap.json not generated!"
+          echo "❌ ERROR: rekap.json not generated!"
           exit 1
         fi
-        
-        RECORD_COUNT=$(jq length data/rekap.json)
-        echo "✅ rekap.json generated: $RECORD_COUNT satker"
-        
-        # Show top 3
-        echo "📈 Top 3 satker (persentase):"
-        jq -r '.[] | select(.Persentase > 0) | "\$.["Satuan Kerja"] | .[0:40])... \$.Persentase)%"' data/rekap.json | head -3
+        RECORDS=$(jq length data/rekap.json)
+        echo "✅ rekap.json OK: $RECORDS records"
+        echo "📈 Top 3:"
+        jq -r '.[0:3] | .[] | "\$.["Satuan Kerja"] | .[0:40])... \$.Persentase)%"' data/rekap.json
 
-    # ========================================
-    # 7. VALIDATE & SHOW STATS
-    # ========================================
-    - name: 📊 Show Final Statistics
+    # 8. GIT COMMIT
+    - name: 💾 Commit & Push
       run: |
-        echo "🎯 FINAL RESULTS:"
-        echo "=================="
+        git config user.name "INAPROC Bot 🤖"
+        git config user.email "actions@github.com"
         
-        # Metadata
-        if [ -f "data/metadata.json" ]; then
-          echo "📋 Metadata:"
-          cat data/metadata.json | jq .
-        fi
-        
-        # Rekap preview
-        echo ""
-        echo "📋 rekap.json preview (first 3):"
-        head -30 data/rekap.json
-        
-        # Size check
-        echo ""
-        echo "💾 File sizes:"
-        du -h data/* | sort -hr
-
-    # ========================================
-    # 8. GIT COMMIT & PUSH
-    # ========================================
-    - name: 💾 Commit & Push Updates
-      run: |
-        git config user.name "INAPROC Auto Bot 🤖"
-        git config user.email "bot@rup-2026-dashboard.com"
-        git config user.timezone "Asia/Jakarta"
-        
-        # Add all data files
         git add data/*
         
-        # Check if there are changes
-        if git diff --staged --quiet; then
-          echo "ℹ️  No changes detected (same data)"
-          exit 0
+        if ! git diff --staged --quiet; then
+          RECORDS=$(jq length data/rekap.json)
+          git commit -m "🤖 Update RUP 2026 D228
+
+📊 $RECORDS satker
+⏰ $(date +'%d/%m/%Y %H:%M WIB')" \
+            -m "Auto-generated by GitHub Actions"
+          git push
+          echo "✅ Pushed to GitHub!"
+        else
+          echo "ℹ️ No changes"
         fi
-        
-        # Generate commit message
-        RECORD_COUNT=$(jq length data/rekap.json 2>/dev/null || echo 0)
-        AVG_PERCENT=$(jq -r '([.[] | .Persentase] | add / length) | round' data/rekap.json 2>/dev/null || echo 0)
-        TOTAL_PAGU=$(jq -r '[.[] | .["Pagu Program"]] | add | floor' data/rekap.json 2>/dev/null || echo 0)
-        
-        git commit -m "🤖 Auto update RUP 2026 D228
 
-📊 $RECORD_COUNT satker aktif
-💰 Total pagu: Rp $(node -e "console.log(Math.floor($TOTAL_PAGU).toLocaleString('id-ID'))")
-📈 Realisasi rata-rata: ${AVG_PERCENT}%
-⏰ Updated: $(date +'%d/%m/%Y %H:%M WIB')
-
-Source: INAPROC Legacy API (D228/2026)" \
-                -m "Co-authored-by: GitHub Actions <actions@github.com>"
-        
-        # Push
-        git push origin main
-        echo "✅ Successfully pushed to main branch!"
-
-    # ========================================
-    # 9. SUCCESS NOTIFICATION
-    # ========================================
-    - name: 🎉 Deploy Success
+    # 9. SUCCESS
+    - name: 🎉 Success
       if: success()
       run: |
-        RECORD_COUNT=$(jq length data/rekap.json 2>/dev/null || echo 0)
-        echo ""
-        echo "🎉 === DEPLOYMENT SUCCESSFUL ==="
-        echo "🌐 Live website: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-        echo "📱 JSON API: https://raw.githubusercontent.com/${{ github.repository }}/main/data/rekap.json"
-        echo "📊 Records: $RECORD_COUNT satker"
-        echo "🔄 Next auto-run: $(date -d 'tomorrow 22:00 UTC' '+%Y-%m-%d %H:%M UTC')"
-        echo ""
-        echo "✅ Ready for production use!"
-
-    # ========================================
-    # 10. FAILURE NOTIFICATION
-    # ========================================
-    - name: ❌ Workflow Failed
-      if: failure()
-      run: |
-        echo "💥 Workflow failed!"
-        echo "Check logs above for details."
-        echo "Manual re-run recommended."
-        exit 1
+        echo "✅ Workflow completed!"
+        echo "🌐 Live: https://YOURUSERNAME.github.io/rup-2026-dashboard"
+        echo "📱 API: https://raw.githubusercontent.com/YOURUSERNAME/rup-2026-dashboard/main/data/rekap.json"
 
   notify:
-    name: 📧 Status Report
+    # Job terpisah untuk notifikasi
     needs: update-data
     runs-on: ubuntu-latest
-    if: always()
-    
     steps:
-    - name: 📤 Final Status
-      run: |
-        echo "Workflow completed: ${{ needs.update-data.result }}"
+    - name: 📤 Status Report
+      run: echo "Status: ${{ needs.update-data.result }}"
