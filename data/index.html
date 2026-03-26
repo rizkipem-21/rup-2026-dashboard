@@ -169,7 +169,7 @@
                 const url = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/data/rekap.json`;
                 console.log('📡 Fetching:', url);
                 
-                const response = await axios.get(url, { timeout: 10000 });
+                const response = await axios.get(https://raw.githubusercontent.com/rizkipem-21/rup-2026-dashboard/main/data/rekap.json, { timeout: 10000 });
                 data = response.data || [];
                 
                 if (data.length === 0) throw new Error('Empty data');
@@ -196,7 +196,7 @@
         async function fetchLastUpdate() {
             try {
                 const url = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/data/last-update.txt`;
-                const response = await axios.get(url);
+                const response = await axios.get(https://raw.githubusercontent.com/rizkipem-21/rup-2026-dashboard/main/data/rekap.json);
                 document.getElementById('lastUpdateTime').textContent = response.data.trim();
             } catch (e) {
                 document.getElementById('lastUpdateTime').textContent = 'Today';
