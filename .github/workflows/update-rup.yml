@@ -1,4 +1,4 @@
-name: REKAP RUP 2026 AUTO (FIX JSON ERROR)
+name: REKAP RUP 2026 AUTO (FINAL FIX)
 
 on:
   schedule:
@@ -16,53 +16,55 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install Library
         run: pip install pandas
 
       # =========================
-      # DOWNLOAD + VALIDASI JSON
+      # DOWNLOAD JSON (ANTI ERROR YAML)
       # =========================
-      - name: Download Data INAPROC (Safe)
+      - name: Download Data INAPROC
         run: |
           mkdir -p data
 
-          download () {
-            url=$1
-            file=$2
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
+          "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" \
+          -o data/Legacy_rup_master-satker_2026.json
 
-            echo "Download $file"
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
+          "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" \
+          -o data/Legacy_rup_paket-penyedia-terumumkan_2026.json
 
-            curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" "$url" -o "$file"
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
+          "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" \
+          -o data/Legacy_rup_paket-swakelola-terumumkan_2026.json
 
-            # jika file kosong atau error -> isi []
-            if [ ! -s "$file" ]; then
-              echo "[]" > "$file"
-            fi
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
+          "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" \
+          -o data/Legacy_rup_program-master_2026.json
 
-            # jika bukan JSON valid -> isi []
-            python - <<EOF
-import json,sys
-try:
-    json.load(open("$file"))
-except:
-    open("$file","w").write("[]")
-EOF
-          }
-
-          download "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" "data/Legacy_rup_master-satker_2026.json"
-          download "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" "data/Legacy_rup_paket-penyedia-terumumkan_2026.json"
-          download "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" "data/Legacy_rup_paket-swakelola-terumumkan_2026.json"
-          download "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" "data/Legacy_rup_program-master_2026.json"
-          download "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" "data/Legacy_rup_struktur-anggaran-pd_2026.json"
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
+          "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" \
+          -o data/Legacy_rup_struktur-anggaran-pd_2026.json
 
       # =========================
-      # GENERATE REKAP (ANTI ERROR)
+      # VALIDASI FILE (TANPA PYTHON INLINE DI YAML)
+      # =========================
+      - name: Fix Empty JSON
+        run: |
+          for f in data/*.json; do
+            if [ ! -s "$f" ]; then
+              echo "[]" > "$f"
+            fi
+          done
+
+      # =========================
+      # GENERATE REKAP
       # =========================
       - name: Generate Rekap JSON
         run: |
-          python <<EOF
+          python << 'EOF'
           import pandas as pd
           import json
           from datetime import datetime
@@ -86,7 +88,6 @@ EOF
           df_penyedia = pd.DataFrame(load_json(base + "Legacy_rup_paket-penyedia-terumumkan_2026.json"))
           df_swakelola= pd.DataFrame(load_json(base + "Legacy_rup_paket-swakelola-terumumkan_2026.json"))
           df_program  = pd.DataFrame(load_json(base + "Legacy_rup_program-master_2026.json"))
-          df_struktur = pd.DataFrame(load_json(base + "Legacy_rup_struktur-anggaran-pd_2026.json"))
 
           if df_master.empty:
               df_final = pd.DataFrame([{
@@ -127,18 +128,18 @@ EOF
               df['Total RUP Terumumkan'] = df['RUP Penyedia'] + df['RUP Swakelola']
               df['Persentase'] = (df['Total RUP Terumumkan'] / df['Pagu Program']).replace([float('inf')],0).fillna(0) * 100
 
-              df = df.sort_values('Satuan Kerja')
-
-              df_final = df
+              df_final = df.sort_values('Satuan Kerja')
 
           with open("data/rekap.json","w",encoding="utf-8") as f:
               json.dump(df_final.to_dict(orient='records'), f, ensure_ascii=False, indent=2)
 
           with open("data/last-update.txt","w") as f:
               f.write(datetime.now().strftime("%d %B %Y %H:%M WIB"))
-
           EOF
 
+      # =========================
+      # COMMIT
+      # =========================
       - name: Commit & Push
         run: |
           git config --global user.name "github-actions"
