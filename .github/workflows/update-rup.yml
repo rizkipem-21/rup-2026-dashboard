@@ -1,67 +1,66 @@
-name: 🤖 Update RUP 2026 D228
+name: Update RUP 2026 D228
 
 on:
   schedule:
     - cron: '0 22 * * *'
   workflow_dispatch:
-  push:
-    paths:
-      - 'process-rup.js'
 
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # ✅ Fix git push permission
     steps:
     - uses: actions/checkout@v4
 
     - uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: 24  # ✅ Node 24 (no deprecation)
 
     - name: Validate Token
       env:
         INAPROC_TOKEN: ${{ secrets.INAPROC_TOKEN }}
       run: |
-        test -n "$INAPROC_TOKEN"
+        if [ -z "$INAPROC_TOKEN" ]; then
+          echo "Token missing!"
+          exit 1
+        fi
+        echo "Token OK"
 
-    - name: Setup data folder
+    - name: Setup data
       run: mkdir -p data
 
-    - name: Download INAPROC Data
+    - name: Download Data
       env:
         INAPROC_TOKEN: ${{ secrets.INAPROC_TOKEN }}
       run: |
         curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_master-satker_2026.json
+          -o data/satker.json || echo "[]" > data/satker.json
 
         curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_paket-penyedia-terumumkan_2026.json
+          -o data/penyedia.json || echo "[]" > data/penyedia.json
 
         curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_paket-swakelola-terumumkan_2026.json
+          -o data/swakelola.json || echo "[]" > data/swakelola.json
 
         curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_program-master_2026.json
+          -o data/program.json || echo "[]" > data/program.json
 
         curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
           "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_struktur-anggaran-pd_2026.json
+          -o data/pagu.json || echo "[]" > data/pagu.json
+
+        ls -la data/
 
     - name: Process Data
       run: node process-rup.js
 
-    - name: Commit Results
-      run: |
-        git config user.name "INAPROC Bot"
-        git config user.email "bot@example.com"
-        git add data/*
-        if git diff --staged --quiet; then
-          echo "No changes"
-        else
-          git commit -m "Update RUP 2026 D228 $(date +%Y-%m-%d)"
-          git push
-        fi
+    - name: Commit & Push
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: Update RUP 2026 D228 - {{ date }}
+        file_pattern: data/*
