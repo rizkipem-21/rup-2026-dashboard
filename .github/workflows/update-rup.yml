@@ -1,8 +1,8 @@
-name: REKAP RUP 2026 AUTO
+name: REKAP RUP 2026 AUTO (FIX JSON ERROR)
 
 on:
   schedule:
-    - cron: "0 22 * * *"   # 05:00 WIB
+    - cron: "0 22 * * *"
   workflow_dispatch:
 
 jobs:
@@ -22,34 +22,43 @@ jobs:
         run: pip install pandas
 
       # =========================
-      # DOWNLOAD JSON LEGACY
+      # DOWNLOAD + VALIDASI JSON
       # =========================
-      - name: Download Data INAPROC
+      - name: Download Data INAPROC (Safe)
         run: |
           mkdir -p data
 
-          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
-          "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_master-satker_2026.json
+          download () {
+            url=$1
+            file=$2
 
-          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
-          "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_paket-penyedia-terumumkan_2026.json
+            echo "Download $file"
 
-          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
-          "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_paket-swakelola-terumumkan_2026.json
+            curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" "$url" -o "$file"
 
-          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
-          "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_program-master_2026.json
+            # jika file kosong atau error -> isi []
+            if [ ! -s "$file" ]; then
+              echo "[]" > "$file"
+            fi
 
-          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
-          "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" \
-          -o data/Legacy_rup_struktur-anggaran-pd_2026.json
+            # jika bukan JSON valid -> isi []
+            python - <<EOF
+import json,sys
+try:
+    json.load(open("$file"))
+except:
+    open("$file","w").write("[]")
+EOF
+          }
+
+          download "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" "data/Legacy_rup_master-satker_2026.json"
+          download "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" "data/Legacy_rup_paket-penyedia-terumumkan_2026.json"
+          download "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" "data/Legacy_rup_paket-swakelola-terumumkan_2026.json"
+          download "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" "data/Legacy_rup_program-master_2026.json"
+          download "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" "data/Legacy_rup_struktur-anggaran-pd_2026.json"
 
       # =========================
-      # PROSES REKAP
+      # GENERATE REKAP (ANTI ERROR)
       # =========================
       - name: Generate Rekap JSON
         run: |
@@ -59,8 +68,17 @@ jobs:
           from datetime import datetime
 
           def load_json(path):
-              with open(path, 'r', encoding='utf-8-sig') as f:
-                  return json.load(f)
+              try:
+                  with open(path, 'r', encoding='utf-8-sig') as f:
+                      data = json.load(f)
+                      if isinstance(data, list):
+                          return data
+                      elif isinstance(data, dict):
+                          return data.get('data', [])
+                      else:
+                          return []
+              except:
+                  return []
 
           base = "data/"
 
@@ -70,66 +88,57 @@ jobs:
           df_program  = pd.DataFrame(load_json(base + "Legacy_rup_program-master_2026.json"))
           df_struktur = pd.DataFrame(load_json(base + "Legacy_rup_struktur-anggaran-pd_2026.json"))
 
-          # MASTER
-          df_master = df_master[df_master['tahun_aktif'].astype(str).str.contains('2026', na=False)]
-          master = df_master[['kd_satker','nama_satker']].drop_duplicates()
-          master.rename(columns={'nama_satker':'Satuan Kerja'}, inplace=True)
+          if df_master.empty:
+              df_final = pd.DataFrame([{
+                  "Satuan Kerja":"DATA KOSONG",
+                  "Pagu Program":0,
+                  "RUP Penyedia":0,
+                  "RUP Swakelola":0,
+                  "Total RUP Terumumkan":0,
+                  "Persentase":0
+              }])
+          else:
+              df_master = df_master[df_master.get('tahun_aktif','').astype(str).str.contains('2026', na=False)]
+              master = df_master[['kd_satker','nama_satker']].drop_duplicates()
+              master.rename(columns={'nama_satker':'Satuan Kerja'}, inplace=True)
 
-          # PENYEDIA
-          penyedia = df_penyedia.groupby('kd_satker', as_index=False)['pagu'].sum()
-          penyedia.rename(columns={'pagu':'RUP Penyedia'}, inplace=True)
+              penyedia = df_penyedia.groupby('kd_satker', as_index=False)['pagu'].sum() if not df_penyedia.empty else pd.DataFrame(columns=['kd_satker','RUP Penyedia'])
+              penyedia.rename(columns={'pagu':'RUP Penyedia'}, inplace=True)
 
-          # SWAKELOLA
-          swakelola = df_swakelola.groupby('kd_satker', as_index=False)['pagu'].sum()
-          swakelola.rename(columns={'pagu':'RUP Swakelola'}, inplace=True)
+              swakelola = df_swakelola.groupby('kd_satker', as_index=False)['pagu'].sum() if not df_swakelola.empty else pd.DataFrame(columns=['kd_satker','RUP Swakelola'])
+              swakelola.rename(columns={'pagu':'RUP Swakelola'}, inplace=True)
 
-          # PROGRAM
-          df_program = df_program.drop_duplicates(
-              subset=['kd_satker','nama_program','kd_program_str','kd_program']
-          )
+              if not df_program.empty:
+                  df_program = df_program.drop_duplicates(subset=['kd_satker','nama_program','kd_program_str','kd_program'], errors='ignore')
+                  df_program = df_program[
+                      ~df_program['nama_program'].astype(str).str.strip().str.contains(r'( M$|\(M\)$)', regex=True)
+                  ]
+                  pagu = df_program.groupby('kd_satker', as_index=False)['pagu_program'].sum()
+                  pagu.rename(columns={'pagu_program':'Pagu Program'}, inplace=True)
+              else:
+                  pagu = pd.DataFrame(columns=['kd_satker','Pagu Program'])
 
-          df_program = df_program[
-              ~df_program['nama_program'].astype(str).str.strip().str.contains(r'( M$|\(M\)$)', regex=True)
-          ]
+              df = master.merge(pagu, on='kd_satker', how='left')
+              df = df.merge(penyedia, on='kd_satker', how='left')
+              df = df.merge(swakelola, on='kd_satker', how='left')
 
-          pagu = df_program.groupby('kd_satker', as_index=False)['pagu_program'].sum()
-          pagu.rename(columns={'pagu_program':'Pagu Program'}, inplace=True)
+              df.fillna(0, inplace=True)
 
-          # STRUKTUR
-          struktur = df_struktur.groupby('kd_satker', as_index=False)[['belanja_pengadaan','belanja_non_pengadaan']].sum()
-          struktur.rename(columns={
-              'belanja_pengadaan':'Pagu Pengadaan',
-              'belanja_non_pengadaan':'Belanja Non Pengadaan'
-          }, inplace=True)
+              df['Total RUP Terumumkan'] = df['RUP Penyedia'] + df['RUP Swakelola']
+              df['Persentase'] = (df['Total RUP Terumumkan'] / df['Pagu Program']).replace([float('inf')],0).fillna(0) * 100
 
-          # MERGE
-          df = master.merge(pagu, on='kd_satker', how='left')
-          df = df.merge(penyedia, on='kd_satker', how='left')
-          df = df.merge(swakelola, on='kd_satker', how='left')
-          df = df.merge(struktur, on='kd_satker', how='left')
+              df = df.sort_values('Satuan Kerja')
 
-          df.fillna(0, inplace=True)
-
-          df['Total RUP Terumumkan'] = df['RUP Penyedia'] + df['RUP Swakelola']
-          df['Persentase'] = (df['Total RUP Terumumkan'] / df['Pagu Program']).replace([float('inf')],0).fillna(0) * 100
-
-          df = df.sort_values('Satuan Kerja')
-
-          # SIMPAN JSON UNTUK WEBSITE
-          df_out = df.to_dict(orient='records')
+              df_final = df
 
           with open("data/rekap.json","w",encoding="utf-8") as f:
-              json.dump(df_out, f, ensure_ascii=False, indent=2)
+              json.dump(df_final.to_dict(orient='records'), f, ensure_ascii=False, indent=2)
 
-          # SIMPAN TIMESTAMP
           with open("data/last-update.txt","w") as f:
               f.write(datetime.now().strftime("%d %B %Y %H:%M WIB"))
 
           EOF
 
-      # =========================
-      # COMMIT HASIL
-      # =========================
       - name: Commit & Push
         run: |
           git config --global user.name "github-actions"
