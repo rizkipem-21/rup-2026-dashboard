@@ -1,66 +1,140 @@
-name: Update RUP 2026 D228
+name: REKAP RUP 2026 AUTO
 
 on:
   schedule:
-    - cron: '0 22 * * *'
+    - cron: "0 22 * * *"   # 05:00 WIB
   workflow_dispatch:
 
 jobs:
-  update-data:
+  rekap:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # ✅ Fix git push permission
+
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v3
 
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 24  # ✅ Node 24 (no deprecation)
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Validate Token
-      env:
-        INAPROC_TOKEN: ${{ secrets.INAPROC_TOKEN }}
-      run: |
-        if [ -z "$INAPROC_TOKEN" ]; then
-          echo "Token missing!"
-          exit 1
-        fi
-        echo "Token OK"
+      - name: Install Library
+        run: pip install pandas
 
-    - name: Setup data
-      run: mkdir -p data
+      # =========================
+      # DOWNLOAD JSON LEGACY
+      # =========================
+      - name: Download Data INAPROC
+        run: |
+          mkdir -p data
 
-    - name: Download Data
-      env:
-        INAPROC_TOKEN: ${{ secrets.INAPROC_TOKEN }}
-      run: |
-        curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
           "https://data.inaproc.id/api/legacy/rup/master-satker?kode_klpd=D228&tahun=2026" \
-          -o data/satker.json || echo "[]" > data/satker.json
+          -o data/Legacy_rup_master-satker_2026.json
 
-        curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
           "https://data.inaproc.id/api/legacy/rup/paket-penyedia-terumumkan?kode_klpd=D228&tahun=2026" \
-          -o data/penyedia.json || echo "[]" > data/penyedia.json
+          -o data/Legacy_rup_paket-penyedia-terumumkan_2026.json
 
-        curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
           "https://data.inaproc.id/api/legacy/rup/paket-swakelola-terumumkan?kode_klpd=D228&tahun=2026" \
-          -o data/swakelola.json || echo "[]" > data/swakelola.json
+          -o data/Legacy_rup_paket-swakelola-terumumkan_2026.json
 
-        curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
           "https://data.inaproc.id/api/legacy/rup/program-master?kode_klpd=D228&tahun=2026" \
-          -o data/program.json || echo "[]" > data/program.json
+          -o data/Legacy_rup_program-master_2026.json
 
-        curl -s -H "Authorization: Bearer $INAPROC_TOKEN" \
+          curl -s -H "Authorization: Bearer inprc7642391c38774272bf57ca25ac1d4544" \
           "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" \
-          -o data/pagu.json || echo "[]" > data/pagu.json
+          -o data/Legacy_rup_struktur-anggaran-pd_2026.json
 
-        ls -la data/
+      # =========================
+      # PROSES REKAP
+      # =========================
+      - name: Generate Rekap JSON
+        run: |
+          python <<EOF
+          import pandas as pd
+          import json
+          from datetime import datetime
 
-    - name: Process Data
-      run: node process-rup.js
+          def load_json(path):
+              with open(path, 'r', encoding='utf-8-sig') as f:
+                  return json.load(f)
 
-    - name: Commit & Push
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: Update RUP 2026 D228 - {{ date }}
-        file_pattern: data/*
+          base = "data/"
+
+          df_master   = pd.DataFrame(load_json(base + "Legacy_rup_master-satker_2026.json"))
+          df_penyedia = pd.DataFrame(load_json(base + "Legacy_rup_paket-penyedia-terumumkan_2026.json"))
+          df_swakelola= pd.DataFrame(load_json(base + "Legacy_rup_paket-swakelola-terumumkan_2026.json"))
+          df_program  = pd.DataFrame(load_json(base + "Legacy_rup_program-master_2026.json"))
+          df_struktur = pd.DataFrame(load_json(base + "Legacy_rup_struktur-anggaran-pd_2026.json"))
+
+          # MASTER
+          df_master = df_master[df_master['tahun_aktif'].astype(str).str.contains('2026', na=False)]
+          master = df_master[['kd_satker','nama_satker']].drop_duplicates()
+          master.rename(columns={'nama_satker':'Satuan Kerja'}, inplace=True)
+
+          # PENYEDIA
+          penyedia = df_penyedia.groupby('kd_satker', as_index=False)['pagu'].sum()
+          penyedia.rename(columns={'pagu':'RUP Penyedia'}, inplace=True)
+
+          # SWAKELOLA
+          swakelola = df_swakelola.groupby('kd_satker', as_index=False)['pagu'].sum()
+          swakelola.rename(columns={'pagu':'RUP Swakelola'}, inplace=True)
+
+          # PROGRAM
+          df_program = df_program.drop_duplicates(
+              subset=['kd_satker','nama_program','kd_program_str','kd_program']
+          )
+
+          df_program = df_program[
+              ~df_program['nama_program'].astype(str).str.strip().str.contains(r'( M$|\(M\)$)', regex=True)
+          ]
+
+          pagu = df_program.groupby('kd_satker', as_index=False)['pagu_program'].sum()
+          pagu.rename(columns={'pagu_program':'Pagu Program'}, inplace=True)
+
+          # STRUKTUR
+          struktur = df_struktur.groupby('kd_satker', as_index=False)[['belanja_pengadaan','belanja_non_pengadaan']].sum()
+          struktur.rename(columns={
+              'belanja_pengadaan':'Pagu Pengadaan',
+              'belanja_non_pengadaan':'Belanja Non Pengadaan'
+          }, inplace=True)
+
+          # MERGE
+          df = master.merge(pagu, on='kd_satker', how='left')
+          df = df.merge(penyedia, on='kd_satker', how='left')
+          df = df.merge(swakelola, on='kd_satker', how='left')
+          df = df.merge(struktur, on='kd_satker', how='left')
+
+          df.fillna(0, inplace=True)
+
+          df['Total RUP Terumumkan'] = df['RUP Penyedia'] + df['RUP Swakelola']
+          df['Persentase'] = (df['Total RUP Terumumkan'] / df['Pagu Program']).replace([float('inf')],0).fillna(0) * 100
+
+          df = df.sort_values('Satuan Kerja')
+
+          # SIMPAN JSON UNTUK WEBSITE
+          df_out = df.to_dict(orient='records')
+
+          with open("data/rekap.json","w",encoding="utf-8") as f:
+              json.dump(df_out, f, ensure_ascii=False, indent=2)
+
+          # SIMPAN TIMESTAMP
+          with open("data/last-update.txt","w") as f:
+              f.write(datetime.now().strftime("%d %B %Y %H:%M WIB"))
+
+          EOF
+
+      # =========================
+      # COMMIT HASIL
+      # =========================
+      - name: Commit & Push
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+
+          git add data/*
+          git commit -m "update rekap $(date +'%Y-%m-%d %H:%M')" || echo "no changes"
+          git push
