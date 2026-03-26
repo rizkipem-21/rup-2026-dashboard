@@ -1,4 +1,4 @@
-name: REKAP RUP 2026 AUTO (FINAL FIX)
+name: REKAP RUP 2026 AUTO (FIX PUSH 403)
 
 on:
   schedule:
@@ -9,9 +9,14 @@ jobs:
   rekap:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write   # ⬅️ WAJIB agar bisa push
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -21,9 +26,6 @@ jobs:
       - name: Install Library
         run: pip install pandas
 
-      # =========================
-      # DOWNLOAD JSON (ANTI ERROR YAML)
-      # =========================
       - name: Download Data INAPROC
         run: |
           mkdir -p data
@@ -48,9 +50,6 @@ jobs:
           "https://data.inaproc.id/api/legacy/rup/struktur-anggaran-pd?kode_klpd=D228&tahun=2026" \
           -o data/Legacy_rup_struktur-anggaran-pd_2026.json
 
-      # =========================
-      # VALIDASI FILE (TANPA PYTHON INLINE DI YAML)
-      # =========================
       - name: Fix Empty JSON
         run: |
           for f in data/*.json; do
@@ -59,9 +58,6 @@ jobs:
             fi
           done
 
-      # =========================
-      # GENERATE REKAP
-      # =========================
       - name: Generate Rekap JSON
         run: |
           python << 'EOF'
@@ -137,9 +133,6 @@ jobs:
               f.write(datetime.now().strftime("%d %B %Y %H:%M WIB"))
           EOF
 
-      # =========================
-      # COMMIT
-      # =========================
       - name: Commit & Push
         run: |
           git config --global user.name "github-actions"
